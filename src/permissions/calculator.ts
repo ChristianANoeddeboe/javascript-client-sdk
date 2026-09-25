@@ -99,6 +99,50 @@ export function calculatePermission(
           return target.permissions ?? DEFAULT_PERMISSION_DIRECT_MESSAGE;
         }
       }
+      case "Thread": {
+        // 2. Threads use the permissions of their parent channel.
+        const parent = target.parent;
+        if (!parent) return 0n;
+
+        let perm = calculatePermission(client, parent, options);
+        if (!bitwiseAndEq(perm, Permission.ViewChannel)) return 0n;
+
+        const manageThreads = bitwiseAndEq(perm, Permission.ManageThreads);
+
+        // 3. Private threads are only visible to members and moderators.
+        if (
+          target.private &&
+          !manageThreads &&
+          target.ownerId !== user?.id &&
+          !(user?.id === client.user?.id && target.joined)
+        ) {
+          return 0n;
+        }
+
+        // 4. Sending is governed by SendMessagesInThreads,
+        //    managing the channel by ManageThreads.
+        const send = bitwiseAndEq(perm, Permission.SendMessagesInThreads);
+        perm &= ~(
+          Permission.SendMessage |
+          Permission.ManageChannel |
+          Permission.ManagePermissions |
+          Permission.ManageWebhooks |
+          Permission.InviteOthers |
+          Permission.CreatePublicThreads |
+          Permission.CreatePrivateThreads
+        );
+
+        if (send) perm |= Permission.SendMessage;
+        if (manageThreads) perm |= Permission.ManageChannel;
+
+        // 5. Locked threads are read-only for non-moderators.
+        if (target.locked && !manageThreads) {
+          perm &= ~(Permission.SendMessage | Permission.React);
+        }
+
+        return perm;
+      }
+      case "ForumChannel":
       case "TextChannel": {
         // 2. Get server.
         const server = target.server;

@@ -282,7 +282,24 @@ export class Server {
    * @returns Whether the server is unread
    */
   get unread(): boolean {
-    return !!this.channels.find((channel) => channel.unread);
+    return (
+      !!this.channels.find((channel) => channel.unread) ||
+      !!this.joinedThreads.find((thread) => thread.unread)
+    );
+  }
+
+  /**
+   * Active threads in this server that we are a member of
+   */
+  get joinedThreads(): Channel[] {
+    const client = this.#collection.client;
+    return client.threadMembers
+      .keys()
+      .map((id) => client.channels.get(id))
+      .filter(
+        (thread): thread is Channel =>
+          !!thread && thread.serverId === this.id && !thread.archived,
+      );
   }
 
   /**
@@ -290,7 +307,7 @@ export class Server {
    * @returns Array of message IDs which are unread
    */
   get mentions(): string[] {
-    const arr = this.channels.map((channel) =>
+    const arr = [...this.channels, ...this.joinedThreads].map((channel) =>
       Array.from(channel.mentions?.values() ?? []),
     );
 
@@ -378,10 +395,14 @@ export class Server {
    * @param data Channel create route data
    * @returns The newly-created channel
    */
-  async createChannel(data: DataCreateServerChannel): Promise<Channel> {
+  async createChannel(
+    data: Omit<DataCreateServerChannel, "type"> & {
+      type?: DataCreateServerChannel["type"] | "Forum";
+    },
+  ): Promise<Channel> {
     const channel = await this.#collection.client.api.post(
       `/servers/${this.id as ""}/channels`,
-      data,
+      data as DataCreateServerChannel,
     );
 
     return this.#collection.client.channels.getOrCreate(channel._id, channel);
@@ -446,6 +467,13 @@ export class Server {
 
         for (const channel of this.channelIds) {
           this.#collection.client.channels.delete(channel);
+        }
+
+        for (const thread of this.#collection.client.channels.filter(
+          (channel) => channel.serverId === this.id,
+        )) {
+          this.#collection.client.channels.delete(thread.id);
+          this.#collection.client.threadMembers.delete(thread.id);
         }
 
         this.#collection.delete(this.id);

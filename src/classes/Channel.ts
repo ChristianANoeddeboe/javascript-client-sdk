@@ -3,11 +3,9 @@ import { batch } from "solid-js";
 import { ReactiveMap } from "@solid-primitives/map";
 import type { ReactiveSet } from "@solid-primitives/set";
 import type {
-  Channel as APIChannel,
   Member as APIMember,
   Message as APIMessage,
   User as APIUser,
-  DataEditChannel,
   DataMessageSearch,
   DataMessageSend,
   Invite,
@@ -18,6 +16,19 @@ import { decodeTime, ulid } from "ulid";
 
 import { ChannelCollection } from "../collections/index.js";
 import { hydrate } from "../hydration/index.js";
+import type {
+  Channel as APIChannel,
+  DataCreateThread,
+  DataEditChannel,
+  ForumLayout,
+  ForumSortOrder,
+  ForumTag,
+  ThreadList,
+  ThreadMember,
+  ThreadNotify,
+  UntypedAPI,
+} from "../lib/threads.js";
+import { createUntypedAPI } from "../lib/threads.js";
 import {
   bitwiseAndEq,
   calculatePermission,
@@ -86,7 +97,9 @@ export class Channel {
    * Absolute pathname to this channel in the client
    */
   get path(): string {
-    if (this.serverId) {
+    if (this.type === "Thread") {
+      return `/server/${this.serverId}/channel/${this.parentId}/thread/${this.id}`;
+    } else if (this.serverId) {
       return `/server/${this.serverId}/channel/${this.id}`;
     } else {
       return `/channel/${this.id}`;
@@ -130,6 +143,200 @@ export class Channel {
    */
   get icon(): File | undefined {
     return this.#collection.getUnderlyingObject(this.id).icon;
+  }
+
+  /**
+   * Whether this is a thread (or forum post)
+   */
+  get isThread(): boolean {
+    return this.type === "Thread";
+  }
+
+  /**
+   * Whether this is a forum channel
+   */
+  get isForum(): boolean {
+    return this.type === "ForumChannel";
+  }
+
+  /**
+   * Whether this thread is a post in a forum channel
+   */
+  get isForumPost(): boolean {
+    return this.isThread && this.parent?.type === "ForumChannel";
+  }
+
+  /**
+   * Id of the channel this thread belongs to
+   */
+  get parentId(): string | undefined {
+    return this.#collection.getUnderlyingObject(this.id).parentId;
+  }
+
+  /**
+   * Channel this thread belongs to
+   */
+  get parent(): Channel | undefined {
+    const parentId = this.parentId;
+    return parentId ? this.#collection.get(parentId) : undefined;
+  }
+
+  /**
+   * Known threads of this channel (active ones, plus any fetched since)
+   */
+  get threads(): Channel[] {
+    return this.#collection.filter((channel) => channel.parentId === this.id);
+  }
+
+  /**
+   * Whether this thread is private
+   */
+  get private(): boolean {
+    return this.#collection.getUnderlyingObject(this.id).private;
+  }
+
+  /**
+   * Whether non-moderators can add members to this private thread
+   */
+  get invitable(): boolean {
+    return this.#collection.getUnderlyingObject(this.id).invitable;
+  }
+
+  /**
+   * Ids of the forum tags applied to this post
+   */
+  get appliedTagIds(): string[] {
+    return this.#collection.getUnderlyingObject(this.id).appliedTags;
+  }
+
+  /**
+   * Forum tags applied to this post
+   */
+  get appliedTags(): ForumTag[] {
+    const tags = this.parent?.availableTags ?? [];
+    return this.appliedTagIds
+      .map((id) => tags.find((tag) => tag.id === id))
+      .filter((tag): tag is ForumTag => !!tag);
+  }
+
+  /**
+   * Whether this post is pinned to the top of its forum
+   */
+  get pinned(): boolean {
+    return this.#collection.getUnderlyingObject(this.id).pinned;
+  }
+
+  /**
+   * Whether this thread is archived
+   */
+  get archived(): boolean {
+    return this.#collection.getUnderlyingObject(this.id).archived;
+  }
+
+  /**
+   * Whether this thread is locked
+   */
+  get locked(): boolean {
+    return this.#collection.getUnderlyingObject(this.id).locked;
+  }
+
+  /**
+   * Minutes of inactivity after which this thread is archived
+   */
+  get autoArchiveMinutes(): number | undefined {
+    return this.#collection.getUnderlyingObject(this.id).autoArchiveMinutes;
+  }
+
+  /**
+   * When this thread was last archived or unarchived
+   */
+  get archivedAt(): Date | undefined {
+    return this.#collection.getUnderlyingObject(this.id).archivedAt;
+  }
+
+  /**
+   * Number of messages in this thread (not counting the starter message)
+   */
+  get messageCount(): number {
+    return this.#collection.getUnderlyingObject(this.id).messageCount;
+  }
+
+  /**
+   * Number of members of this thread
+   */
+  get memberCount(): number {
+    return this.#collection.getUnderlyingObject(this.id).memberCount;
+  }
+
+  /**
+   * Tags that can be applied to posts in this forum
+   */
+  get availableTags(): ForumTag[] {
+    return this.#collection.getUnderlyingObject(this.id).availableTags;
+  }
+
+  /**
+   * Whether posts in this forum must have a tag
+   */
+  get requireTag(): boolean {
+    return this.#collection.getUnderlyingObject(this.id).requireTag;
+  }
+
+  /**
+   * Emoji shown as the reaction button on posts in this forum
+   */
+  get defaultReactionEmoji(): string | undefined {
+    return this.#collection.getUnderlyingObject(this.id).defaultReactionEmoji;
+  }
+
+  /**
+   * Default order of posts in this forum
+   */
+  get defaultSortOrder(): ForumSortOrder {
+    return this.#collection.getUnderlyingObject(this.id).defaultSortOrder;
+  }
+
+  /**
+   * Default layout of posts in this forum
+   */
+  get defaultLayout(): ForumLayout {
+    return this.#collection.getUnderlyingObject(this.id).defaultLayout;
+  }
+
+  /**
+   * Slowmode applied to new posts in this forum
+   */
+  get defaultThreadSlowmode(): number | undefined {
+    return this.#collection.getUnderlyingObject(this.id).defaultThreadSlowmode;
+  }
+
+  /**
+   * Default auto archive duration (in minutes) for new threads
+   */
+  get defaultAutoArchiveMinutes(): number | undefined {
+    return this.#collection.getUnderlyingObject(this.id)
+      .defaultAutoArchiveMinutes;
+  }
+
+  /**
+   * Whether we are a member of this thread
+   */
+  get joined(): boolean {
+    return this.#collection.client.threadMembers.has(this.id);
+  }
+
+  /**
+   * Our notification setting for this thread
+   */
+  get threadNotify(): ThreadNotify | undefined {
+    return this.#collection.client.threadMembers.get(this.id)?.notify;
+  }
+
+  /**
+   * Starter message of this thread (it has the same id), if loaded
+   */
+  get starterMessage(): Message | undefined {
+    return this.#collection.client.messages.get(this.id);
   }
 
   /**
@@ -461,14 +668,202 @@ export class Channel {
   }
 
   /**
+   * API client without route typing, for routes stoat-api doesn't know about
+   */
+  get #api(): UntypedAPI {
+    return createUntypedAPI(this.#collection.client.api);
+  }
+
+  /**
+   * Store a list of threads and everything that came with it
+   * @param list Thread list
+   * @returns Threads
+   */
+  #ingestThreadList(list: ThreadList): Channel[] {
+    const client = this.#collection.client;
+    return batch(() => {
+      list.users?.forEach((user) => client.users.getOrCreate(user._id, user));
+      list.messages?.forEach((message) =>
+        client.messages.getOrCreate(message._id, message),
+      );
+
+      const threads = list.threads.map((thread) => {
+        // Refresh threads we already know about
+        if (client.channels.has(thread._id)) {
+          client.channels.updateUnderlyingObject(
+            thread._id,
+            hydrate("channel", thread, client, false),
+          );
+        }
+
+        return client.channels.getOrCreate(thread._id, thread);
+      });
+
+      client.threadMembers.set(...list.members);
+      return threads;
+    });
+  }
+
+  /**
+   * Start a thread in this text channel, or create a post in this forum channel
+   * @param data Thread data (forum posts need `message`)
+   * @param idempotencyKey Idempotency key for the post's first message
+   * @requires `TextChannel`, `ForumChannel`
+   * @returns The new thread
+   */
+  async createThread(
+    data: DataCreateThread,
+    idempotencyKey: string = ulid(),
+  ): Promise<Channel> {
+    const thread = (await this.#api.post(`/channels/${this.id}/threads`, data, {
+      headers: { "Idempotency-Key": idempotencyKey },
+    })) as APIChannel;
+
+    return this.#collection.getOrCreate(thread._id, thread);
+  }
+
+  /**
+   * Start a public thread from a message in this text channel
+   * @param message Message or its id (the thread gets the same id)
+   * @param data Thread data
+   * @requires `TextChannel`
+   * @returns The new thread
+   */
+  async createThreadFromMessage(
+    message: Message | string,
+    data: Omit<DataCreateThread, "private" | "message" | "applied_tags">,
+  ): Promise<Channel> {
+    const messageId = typeof message === "string" ? message : message.id;
+    const thread = (await this.#api.post(
+      `/channels/${this.id}/messages/${messageId}/threads`,
+      data,
+    )) as APIChannel;
+
+    return this.#collection.getOrCreate(thread._id, thread);
+  }
+
+  /**
+   * Fetch the active threads of this channel
+   * @requires `TextChannel`, `ForumChannel`
+   * @returns Threads
+   */
+  async fetchActiveThreads(): Promise<Channel[]> {
+    return this.#ingestThreadList(
+      (await this.#api.get(
+        `/channels/${this.id}/threads/active`,
+      )) as ThreadList,
+    );
+  }
+
+  /**
+   * Fetch archived threads of this channel, most recently archived first
+   * @param params Paging options (`before` is an ISO 8601 timestamp)
+   * @requires `TextChannel`, `ForumChannel`
+   * @returns Threads and whether there are more
+   */
+  async fetchArchivedThreads(params?: {
+    private?: boolean;
+    before?: string;
+    limit?: number;
+  }): Promise<{ threads: Channel[]; hasMore: boolean }> {
+    const list = (await this.#api.get(`/channels/${this.id}/threads/archived`, {
+      ...params,
+    })) as ThreadList;
+
+    return { threads: this.#ingestThreadList(list), hasMore: list.has_more };
+  }
+
+  /**
+   * List the posts of this forum, pinned posts first
+   * @param params Search options (`before` is a post id)
+   * @requires `ForumChannel`
+   * @returns Posts (their first messages and authors are loaded) and whether there are more
+   */
+  async searchPosts(params?: {
+    tags?: string[];
+    sort?: ForumSortOrder;
+    archived?: boolean;
+    before?: string;
+    limit?: number;
+  }): Promise<{ threads: Channel[]; hasMore: boolean }> {
+    const list = (await this.#api.get(`/channels/${this.id}/threads/search`, {
+      ...params,
+    })) as ThreadList;
+
+    return { threads: this.#ingestThreadList(list), hasMore: list.has_more };
+  }
+
+  /**
+   * Join (follow) this thread
+   * @requires `Thread`
+   */
+  async joinThread(): Promise<void> {
+    await this.#api.put(`/channels/${this.id}/thread_members/@me`);
+  }
+
+  /**
+   * Leave (unfollow) this thread
+   * @requires `Thread`
+   */
+  async leaveThread(): Promise<void> {
+    await this.#api.delete(`/channels/${this.id}/thread_members/@me`);
+    this.#collection.client.threadMembers.delete(this.id);
+  }
+
+  /**
+   * Add someone to this thread
+   * @param user User or their id
+   * @requires `Thread`
+   */
+  async addThreadMember(user: User | string): Promise<void> {
+    const userId = typeof user === "string" ? user : user.id;
+    await this.#api.put(`/channels/${this.id}/thread_members/${userId}`);
+  }
+
+  /**
+   * Remove someone from this thread
+   * @param user User or their id
+   * @requires `Thread`
+   */
+  async removeThreadMember(user: User | string): Promise<void> {
+    const userId = typeof user === "string" ? user : user.id;
+    await this.#api.delete(`/channels/${this.id}/thread_members/${userId}`);
+  }
+
+  /**
+   * Fetch the members of this thread
+   * @requires `Thread`
+   * @returns Thread members
+   */
+  async fetchThreadMembers(): Promise<ThreadMember[]> {
+    return (await this.#api.get(
+      `/channels/${this.id}/thread_members`,
+    )) as ThreadMember[];
+  }
+
+  /**
+   * Change our notification setting for this thread
+   * @param notify Notification setting
+   * @requires `Thread`
+   */
+  async setThreadNotify(notify: ThreadNotify): Promise<void> {
+    const member = (await this.#api.patch(
+      `/channels/${this.id}/thread_members/@me`,
+      { notify },
+    )) as ThreadMember;
+
+    this.#collection.client.threadMembers.set(member);
+  }
+
+  /**
    * Edit a channel
    * @param data Changes
    */
   async edit(data: DataEditChannel) {
-    const channel = await this.#collection.client.api.patch(
-      `/channels/${this.id as ""}`,
+    const channel = (await this.#api.patch(
+      `/channels/${this.id}`,
       data,
-    );
+    )) as APIChannel;
 
     this.#collection.updateUnderlyingObject(
       this.id,
@@ -492,6 +887,7 @@ export class Channel {
     }
 
     this.#collection.delete(this.id);
+    this.#collection.client.threadMembers.delete(this.id);
   }
 
   /**

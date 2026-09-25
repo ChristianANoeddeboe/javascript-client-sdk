@@ -92,8 +92,18 @@ export const Permission = {
   /// Mention a role
   MentionRoles: 2n ** 38n,
 
+  // * Thread permissions
+  /// Create public threads and forum posts
+  CreatePublicThreads: 2n ** 48n,
+  /// Create private threads
+  CreatePrivateThreads: 2n ** 49n,
+  /// Send messages in threads and forum posts
+  SendMessagesInThreads: 2n ** 50n,
+  /// Rename, archive, lock, pin and delete threads, and see all private threads
+  ManageThreads: 2n ** 51n,
+
   // * Misc. permissions
-  // % Bits 39 to 52: free area
+  // % Bits 41 to 47: free area
   // % Bits 53 to 64: do not use
 
   // * Grant all permissions
@@ -130,7 +140,10 @@ export const DEFAULT_PERMISSION =
   Permission.Connect +
   Permission.Speak +
   Permission.Video +
-  Permission.Listen;
+  Permission.Listen +
+  Permission.CreatePublicThreads +
+  Permission.CreatePrivateThreads +
+  Permission.SendMessagesInThreads;
 
 /**
  * Permissions in saved messages channel

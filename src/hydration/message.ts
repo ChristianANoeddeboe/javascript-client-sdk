@@ -98,4 +98,8 @@ export enum MessageFlags {
    * This cannot be true if MentionsEveryone is true
    */
   MentionsOnline = 3,
+  /**
+   * A thread was started from this message (the thread has the same id)
+   */
+  HasThread = 16,
 }

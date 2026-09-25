@@ -1,8 +1,7 @@
-import type { Channel as APIChannel } from "stoat-api";
-
 import { Channel } from "../classes/Channel.js";
 import { User } from "../classes/User.js";
 import type { HydratedChannel } from "../hydration/channel.js";
+import type { Channel as APIChannel } from "../lib/threads.js";
 
 import { ClassCollection } from "./Collection.js";
 

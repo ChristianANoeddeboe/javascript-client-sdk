@@ -9,3 +9,14 @@ export { ServerFlags } from "./hydration/server.js";
 export { UserBadges, UserFlags } from "./hydration/user.js";
 export * from "./lib/regex.js";
 export * from "./permissions/definitions.js";
+export { AUTO_ARCHIVE_MINUTES } from "./lib/threads.js";
+export type {
+  DataCreateThread,
+  DataEditChannel,
+  ForumLayout,
+  ForumSortOrder,
+  ForumTag,
+  ThreadMember,
+  ThreadNotify,
+} from "./lib/threads.js";
+export type { ThreadMembership } from "./collections/ThreadMemberCollection.js";

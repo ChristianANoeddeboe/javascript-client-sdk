@@ -3,11 +3,9 @@ import { batch } from "solid-js";
 
 import { ReactiveSet } from "@solid-primitives/set";
 import type {
-  Channel,
   ChannelUnread,
   Emoji,
   Error,
-  FieldsChannel,
   FieldsMember,
   FieldsServer,
   FieldsUser,
@@ -25,6 +23,7 @@ import { MessageEmbed } from "../classes/MessageEmbed.js";
 import { ServerRole } from "../classes/ServerRole.js";
 import { VoiceParticipant } from "../classes/VoiceParticipant.js";
 import { hydrate } from "../hydration/index.js";
+import type { Channel, FieldsChannel, ThreadMember } from "../lib/threads.js";
 
 /**
  * Version 1 of the events protocol
@@ -113,6 +112,15 @@ type ServerMessage =
       clear?: FieldsChannel[];
     }
   | { type: "ChannelDelete"; id: string }
+  | { type: "ThreadMemberUpdate"; id: string; member?: ThreadMember | null }
+  | {
+      type: "ThreadMembersUpdate";
+      id: string;
+      server: string;
+      member_count: number;
+      added: ThreadMember[];
+      removed: string[];
+    }
   | { type: "ChannelGroupJoin"; id: string; user: string }
   | { type: "ChannelGroupLeave"; id: string; user: string }
   | { type: "ChannelStartTyping"; id: string; user: string }
@@ -259,6 +267,7 @@ type ReadyData = {
   members: Member[];
   emojis: Emoji[];
   voice_states: ChannelVoiceState[];
+  thread_members: ThreadMember[];
 
   user_settings: Record<string, unknown>;
   channel_unreads: ChannelUnread[];
@@ -318,6 +327,11 @@ export async function handleEvent(
           }
         }
 
+        if (event.thread_members) {
+          client.threadMembers.reset();
+          client.threadMembers.set(...event.thread_members);
+        }
+
         if (event.voice_states) {
           for (const state of event.voice_states) {
             const channel = client.channels.get(state.id);
@@ -356,6 +370,17 @@ export async function handleEvent(
       break;
     }
     case "Message": {
+      // Thread message counts exclude the starter message, and our own
+      // messages are already known from the send response
+      const thread = client.channels.get(event.channel);
+      if (thread?.type === "Thread" && event._id !== thread.id) {
+        client.channels.updateUnderlyingObject(
+          thread.id,
+          "messageCount",
+          thread.messageCount + 1,
+        );
+      }
+
       if (!client.messages.has(event._id)) {
         batch(() => {
           if (event.member) {
@@ -411,7 +436,8 @@ export async function handleEvent(
             client,
             false,
           ),
-          editedAt: new Date(),
+          // Only real edits carry an edited timestamp (not flag or embed
+          // updates, such as a thread being started from the message)
         });
 
         client.emit("messageUpdate", message, previousMessage);
@@ -559,6 +585,18 @@ export async function handleEvent(
               case "Icon":
                 changes["icon"] = undefined;
                 break;
+              case "Slowmode":
+                changes["slowmode"] = 0;
+                break;
+              case "DefaultReactionEmoji":
+                changes["defaultReactionEmoji"] = undefined;
+                break;
+              case "DefaultThreadSlowmode":
+                changes["defaultThreadSlowmode"] = undefined;
+                break;
+              case "DefaultAutoArchiveMinutes":
+                changes["defaultAutoArchiveMinutes"] = undefined;
+                break;
             }
           }
         }
@@ -570,9 +608,38 @@ export async function handleEvent(
     }
     case "ChannelDelete": {
       if (client.channels.getOrPartial(event.id)) {
-        const channel = client.channels.getUnderlyingObject(event.id);
-        client.emit("channelDelete", channel);
-        client.channels.delete(event.id);
+        batch(() => {
+          // Threads go away together with their parent
+          for (const thread of client.channels.filter(
+            (channel) => channel.parentId === event.id,
+          )) {
+            client.channels.delete(thread.id);
+            client.threadMembers.delete(thread.id);
+          }
+
+          const channel = client.channels.getUnderlyingObject(event.id);
+          client.emit("channelDelete", channel);
+          client.channels.delete(event.id);
+          client.threadMembers.delete(event.id);
+        });
+      }
+      break;
+    }
+    case "ThreadMemberUpdate": {
+      if (event.member) {
+        client.threadMembers.set(event.member);
+      } else {
+        client.threadMembers.delete(event.id);
+      }
+      break;
+    }
+    case "ThreadMembersUpdate": {
+      if (client.channels.has(event.id)) {
+        client.channels.updateUnderlyingObject(
+          event.id,
+          "memberCount",
+          event.member_count,
+        );
       }
       break;
     }

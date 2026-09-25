@@ -6,6 +6,7 @@ import { decodeTime } from "ulid";
 
 import type { Client } from "../Client.js";
 
+import type { Channel } from "./Channel.js";
 import type { User } from "./User.js";
 import { Message } from "./index.js";
 
@@ -14,14 +15,17 @@ import { Message } from "./index.js";
  */
 export abstract class SystemMessage {
   protected client?: Client;
-  readonly type: APISystemMessage["type"];
+  readonly type: APISystemMessage["type"] | "thread_created";
 
   /**
    * Construct System Message
    * @param client Client
    * @param type Type
    */
-  constructor(client: Client, type: APISystemMessage["type"]) {
+  constructor(
+    client: Client,
+    type: APISystemMessage["type"] | "thread_created",
+  ) {
     this.client = client;
     this.type = type;
   }
@@ -61,6 +65,14 @@ export abstract class SystemMessage {
       case "call_started":
         return new CallStartedSystemMessage(client, parent, message);
       default:
+        if ((message as { type: string }).type === "thread_created") {
+          return new ThreadCreatedSystemMessage(
+            client,
+            parent,
+            message as never,
+          );
+        }
+
         return new TextSystemMessage(client, {
           type: "text",
           content: `${(message as { type: string }).type} is not supported.`,
@@ -314,6 +326,46 @@ export class CallStartedSystemMessage extends SystemMessage {
 
   /**
    * User that started the call
+   */
+  get by(): User | undefined {
+    return this.client!.users.get(this.byId);
+  }
+}
+
+/**
+ * Thread Created System Message
+ */
+export class ThreadCreatedSystemMessage extends SystemMessage {
+  readonly threadId: string;
+  readonly name: string;
+  readonly byId: string;
+
+  /**
+   * Construct System Message
+   * @param client Client
+   * @param parent Message (it has the thread's id)
+   * @param systemMessage System Message
+   */
+  constructor(
+    client: Client,
+    parent: APIMessage,
+    systemMessage: { type: "thread_created"; name: string; by: string },
+  ) {
+    super(client, systemMessage.type);
+    this.threadId = parent._id;
+    this.name = systemMessage.name;
+    this.byId = systemMessage.by;
+  }
+
+  /**
+   * Thread that was started
+   */
+  get thread(): Channel | undefined {
+    return this.client!.channels.get(this.threadId);
+  }
+
+  /**
+   * User that started the thread
    */
   get by(): User | undefined {
     return this.client!.users.get(this.byId);

@@ -22,6 +22,7 @@ import { MessageCollection } from "./collections/MessageCollection.js";
 import { ServerCollection } from "./collections/ServerCollection.js";
 import { ServerMemberCollection } from "./collections/ServerMemberCollection.js";
 import { SessionCollection } from "./collections/SessionCollection.js";
+import { ThreadMemberCollection } from "./collections/ThreadMemberCollection.js";
 import { UserCollection } from "./collections/UserCollection.js";
 import {
   ConnectionState,
@@ -182,6 +183,7 @@ export class Client extends AsyncEventEmitter<Events> {
   readonly servers;
   readonly serverMembers;
   readonly sessions;
+  readonly threadMembers;
   readonly users;
   readonly userSlowmodes;
 
@@ -276,6 +278,7 @@ export class Client extends AsyncEventEmitter<Events> {
     this.servers = new ServerCollection(this);
     this.serverMembers = new ServerMemberCollection(this);
     this.sessions = new SessionCollection(this);
+    this.threadMembers = new ThreadMemberCollection(this);
     this.users = new UserCollection(this);
     this.userSlowmodes = new ReactiveMap<string, UserSlowmodes>();
 

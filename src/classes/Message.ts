@@ -324,6 +324,21 @@ export class Message {
   }
 
   /**
+   * Whether a thread was started from this message
+   */
+  get hasThread(): boolean {
+    return (this.flags & MessageFlags.HasThread) === MessageFlags.HasThread;
+  }
+
+  /**
+   * Thread started from this message (it has the same id), if loaded
+   */
+  get thread(): Channel | undefined {
+    if (!this.hasThread) return undefined;
+    return this.#collection.client.channels.get(this.id);
+  }
+
+  /**
    * Edit a message
    * @param data Message edit route data
    */
