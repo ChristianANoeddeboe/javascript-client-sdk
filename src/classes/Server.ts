@@ -25,6 +25,12 @@ import {
   calculatePermission,
 } from "../permissions/calculator.js";
 import { Permission } from "../permissions/definitions.js";
+import type {
+  Command,
+  DataCreateCommand,
+  UntypedAPI,
+} from "../lib/commands.js";
+import { createUntypedAPI } from "../lib/commands.js";
 
 import type { Channel } from "./Channel.js";
 import type { Emoji } from "./Emoji.js";
@@ -878,5 +884,55 @@ export class Server {
     }
 
     return highest;
+  }
+
+  /**
+   * API client without route typing, for routes stoat-api doesn't know about
+   */
+  get #api(): UntypedAPI {
+    return createUntypedAPI(this.#collection.client.api);
+  }
+
+  /**
+   * Register (or update) a bot slash command on this server.
+   * If a command with the same name already exists and is owned by the same
+   * bot it is updated, otherwise a new command is inserted.
+   * @param name Command name, with or without a leading slash
+   * @param data Command data (description)
+   * @returns The created or updated command
+   */
+  async createCommand(
+    name: string,
+    data?: DataCreateCommand,
+  ): Promise<Command> {
+    const command = (await this.#api.put(
+      `/commands/${this.id}/${name.replace(/^\//, "")}`,
+      data ?? {},
+    )) as Command;
+
+    return command;
+  }
+
+  /**
+   * Fetch the bot slash commands registered on this server, used by clients
+   * to populate the `/` autocomplete.
+   * @returns Commands
+   */
+  async fetchServerCommands(): Promise<Command[]> {
+    const commands = (await this.#api.get(
+      `/commands/${this.id}`,
+    )) as Command[];
+
+    return commands;
+  }
+
+  /**
+   * Delete a bot slash command on this server.
+   * @param name Command name, with or without a leading slash
+   */
+  async deleteCommand(name: string): Promise<void> {
+    await this.#api.delete(
+      `/commands/${this.id}/${name.replace(/^\//, "")}`,
+    );
   }
 }

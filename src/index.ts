@@ -8,6 +8,7 @@ export { BotFlags } from "./hydration/bot.js";
 export { ServerFlags } from "./hydration/server.js";
 export { UserBadges, UserFlags } from "./hydration/user.js";
 export * from "./lib/regex.js";
+export type { Command, DataCreateCommand } from "./lib/commands.js";
 export * from "./permissions/definitions.js";
 export { AUTO_ARCHIVE_MINUTES } from "./lib/threads.js";
 export type {
