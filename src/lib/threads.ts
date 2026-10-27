@@ -177,8 +177,10 @@ export type ThreadList = {
 
 /**
  * Minutes of inactivity after which a thread may be archived
+ *
+ * `0` disables auto archiving for the thread.
  */
-export const AUTO_ARCHIVE_MINUTES = [60, 1440, 4320, 10080] as const;
+export const AUTO_ARCHIVE_MINUTES = [0, 60, 1440, 4320, 10080] as const;
 
 /**
  * Request options for routes stoat-api does not know about
