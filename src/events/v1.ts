@@ -561,6 +561,40 @@ export async function handleEvent(
     case "ChannelCreate": {
       if (!client.channels.has(event._id)) {
         client.channels.getOrCreate(event._id, event, true);
+      } else {
+        // A channel we already know can be sent as a create again when it
+        // becomes visible to us a second time: the event server rewrites
+        // ChannelUpdate to ChannelCreate when ViewChannel flips from denied to
+        // allowed (e.g. re-opening a closed thread). Applying the payload is
+        // required, otherwise stale flags such as `archived` never clear.
+        const channel = client.channels.getOrPartial(event._id);
+        if (!channel) break;
+
+        const previousChannel = {
+          ...client.channels.getUnderlyingObject(event._id),
+        };
+
+        const changes = hydrate("channel", event, client, false);
+
+        // The payload is the complete channel, but the API omits booleans that
+        // are false (serde `skip_serializing_if = "if_false"`), so any flag
+        // missing from it has to be cleared explicitly.
+        for (const flag of [
+          "archived",
+          "locked",
+          "pinned",
+          "private",
+          "invitable",
+          "nsfw",
+          "requireTag",
+        ] as const) {
+          if (!(flag in changes)) {
+            (changes as Record<string, unknown>)[flag] = false;
+          }
+        }
+
+        client.channels.updateUnderlyingObject(event._id, changes);
+        client.emit("channelUpdate", channel, previousChannel);
       }
       break;
     }
