@@ -1410,6 +1410,31 @@ export class Channel {
   }
 
   /**
+   * Queue a YouTube link
+   *
+   * Only the single video the link points at is queued: playlist parameters are
+   * ignored, and playlist-only links are rejected by the server.
+   *
+   * Requires an active membership of the channel and `UploadFiles`. The server
+   * downloads and transcodes the audio, so this resolves only once the track has
+   * been queued (or the server rejected it).
+   *
+   * @param url YouTube video link
+   * @param title Display title, defaults to the video's title
+   */
+  async djQueueUrl(url: string, title?: string): Promise<DjTrack> {
+    const body: { url: string; title?: string } = { url };
+    if (title) body.title = title;
+
+    const track = (await this.#api.post(
+      `/channels/${this.id}/dj/queue/url`,
+      body,
+    )) as ApiDjTrack;
+
+    return hydrateDjTrack(track);
+  }
+
+  /**
    * Perform a DJ request which answers with a state snapshot
    */
   async #djRequest(
