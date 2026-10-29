@@ -1433,7 +1433,23 @@ export class Channel {
    */
   #applyDjState(state: ApiDjChannelState): DjState {
     const client = this.#collection.client;
-    const hydrated = hydrateDjState(state, client.djStates.get(this.id));
+    const existing = client.djStates.get(this.id);
+
+    // A REST snapshot can race the event stream. `POST /dj/skip`, for
+    // example, is answered from the state *before* the engine advances, so
+    // its response can arrive after `DjSkipped`/`DjTrackStarted` and would
+    // otherwise clobber the newer track. Ignore anything older than what the
+    // events already applied.
+    if (
+      existing &&
+      state.server_time &&
+      existing.serverTime &&
+      state.server_time < existing.serverTime
+    ) {
+      return existing;
+    }
+
+    const hydrated = hydrateDjState(state, existing);
 
     client.djStates.set(this.id, hydrated);
     this.#collection.updateUnderlyingObject(this.id, {
