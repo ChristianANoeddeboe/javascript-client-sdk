@@ -23,6 +23,18 @@ import { MessageEmbed } from "../classes/MessageEmbed.js";
 import { ServerRole } from "../classes/ServerRole.js";
 import { VoiceParticipant } from "../classes/VoiceParticipant.js";
 import { hydrate } from "../hydration/index.js";
+import {
+  DJ_DEFAULT_SETTINGS,
+  emptyDjState,
+  hydrateDjSettings,
+  hydrateDjTrack,
+} from "../lib/dj.js";
+import type {
+  ApiDjChannelMembers,
+  ApiDjTrack,
+  DjInformation,
+  DjState,
+} from "../lib/dj.js";
 import type { Channel, FieldsChannel, ThreadMember } from "../lib/threads.js";
 
 /**
@@ -215,6 +227,56 @@ type ServerMessage =
   | {
       type: "UserSlowmodes";
       slowmodes: UserSlowmodes[];
+    }
+  | {
+      type: "DjMemberJoined";
+      channel: string;
+      user: string;
+      count: number;
+    }
+  | {
+      type: "DjMemberLeft";
+      channel: string;
+      user: string;
+      count: number;
+    }
+  | {
+      type: "DjTrackQueued";
+      channel: string;
+      track: ApiDjTrack;
+      position: number;
+    }
+  | {
+      type: "DjTrackStarted";
+      channel: string;
+      track: ApiDjTrack;
+      position_ms: number;
+      server_time: number;
+      signed_url: string;
+    }
+  | {
+      type: "DjNowPlaying";
+      channel: string;
+      track: ApiDjTrack;
+      position_ms: number;
+      server_time: number;
+      signed_url: string;
+    }
+  | {
+      type: "DjVote";
+      channel: string;
+      votes: number;
+      needed: number;
+      voters: string[];
+    }
+  | { type: "DjSkipped"; channel: string; track: ApiDjTrack }
+  | { type: "DjTrackEnded"; channel: string; track: ApiDjTrack }
+  | { type: "DjQueueCleared"; channel: string }
+  | { type: "DjUploadFailed"; channel: string; reason: string }
+  | {
+      type: "DjSettingsUpdate";
+      channel: string;
+      settings: DjInformation;
     };
 
 /**
@@ -268,12 +330,43 @@ type ReadyData = {
   emojis: Emoji[];
   voice_states: ChannelVoiceState[];
   thread_members: ThreadMember[];
+  dj_states: ApiDjChannelMembers[];
 
   user_settings: Record<string, unknown>;
   channel_unreads: ChannelUnread[];
 
   policy_changes: PolicyChange[];
 };
+
+/**
+ * Update the DJ state of a channel
+ *
+ * A member event can arrive before a state snapshot (a plain `GET` is not
+ * required to have happened), so a missing state is created from the channel's
+ * settings.
+ *
+ * @param client Client
+ * @param channelId Channel Id
+ * @param update Partial state to merge in
+ * @returns Updated state
+ */
+function updateDjState(
+  client: Client,
+  channelId: string,
+  update: (state: DjState) => Partial<DjState>,
+): DjState {
+  const existing = client.djStates.get(channelId);
+  const settings =
+    existing?.settings ??
+    client.channels.get(channelId)?.dj ??
+    DJ_DEFAULT_SETTINGS;
+
+  const state = existing ?? emptyDjState(channelId, settings);
+  const next: DjState = { ...state, settings, ...update(state) };
+
+  client.djStates.set(channelId, next);
+  return next;
+}
 
 /**
  * Handle an event for the Client
@@ -330,6 +423,24 @@ export async function handleEvent(
         if (event.thread_members) {
           client.threadMembers.reset();
           client.threadMembers.set(...event.thread_members);
+        }
+
+        // `dj_states` only carries membership, so keep any queue/now-playing
+        // we already have for the channel
+        if (event.dj_states) {
+          for (const djState of event.dj_states) {
+            const existing = client.djStates.get(djState._id);
+            const settings =
+              existing?.settings ??
+              client.channels.get(djState._id)?.dj ??
+              DJ_DEFAULT_SETTINGS;
+
+            client.djStates.set(djState._id, {
+              ...(existing ?? emptyDjState(djState._id, settings)),
+              settings,
+              members: djState.members,
+            });
+          }
         }
 
         if (event.voice_states) {
@@ -618,6 +729,9 @@ export async function handleEvent(
                 break;
               case "Icon":
                 changes["icon"] = undefined;
+                break;
+              case "Dj":
+                changes["dj"] = undefined;
                 break;
               case "Slowmode":
                 changes["slowmode"] = 0;
@@ -1110,6 +1224,194 @@ export async function handleEvent(
         client.setSlowmode(slowmode.channel_id, slowmode);
       }
       client.emit("userSlowmodes");
+      break;
+    }
+    case "DjMemberJoined": {
+      const channel = client.channels.get(event.channel);
+
+      updateDjState(client, event.channel, (state) => ({
+        members: state.members.includes(event.user)
+          ? state.members
+          : [...state.members, event.user],
+      }));
+
+      if (channel) {
+        client.emit("djMemberJoined", channel, event.user, event.count);
+      }
+      break;
+    }
+    case "DjMemberLeft": {
+      const channel = client.channels.get(event.channel);
+
+      updateDjState(client, event.channel, (state) => ({
+        members: state.members.filter((id) => id !== event.user),
+      }));
+
+      if (channel) {
+        client.emit("djMemberLeft", channel, event.user, event.count);
+      }
+      break;
+    }
+    case "DjTrackQueued": {
+      const channel = client.channels.get(event.channel);
+      const track = hydrateDjTrack(event.track);
+
+      updateDjState(client, event.channel, (state) => {
+        // The event carries the index it was pushed at, but a snapshot may
+        // already contain it: replace in place instead of duplicating
+        const queue = state.queue.filter((entry) => entry.id !== track.id);
+        queue.splice(Math.min(event.position, queue.length), 0, track);
+
+        return { queue };
+      });
+
+      if (channel) {
+        client.emit("djTrackQueued", channel, track, event.position);
+      }
+      break;
+    }
+    case "DjTrackStarted": {
+      const channel = client.channels.get(event.channel);
+      const track = hydrateDjTrack(event.track);
+
+      updateDjState(client, event.channel, (state) => ({
+        current: {
+          track,
+          // The event has no `started_at`; derive it from the position it
+          // started at so the client can compute drift
+          startedAt: event.server_time - event.position_ms,
+        },
+        positionMs: event.position_ms,
+        serverTime: event.server_time,
+        signedUrl: event.signed_url,
+        signedUrlReceivedAt: Date.now(),
+        queue: state.queue.filter((entry) => entry.id !== track.id),
+        votes: 0,
+        voters: [],
+      }));
+
+      if (channel) {
+        client.emit(
+          "djTrackStarted",
+          channel,
+          track,
+          event.position_ms,
+          event.signed_url,
+        );
+      }
+      break;
+    }
+    case "DjNowPlaying": {
+      const channel = client.channels.get(event.channel);
+      const track = hydrateDjTrack(event.track);
+
+      updateDjState(client, event.channel, () => ({
+        current: {
+          track,
+          startedAt: event.server_time - event.position_ms,
+        },
+        positionMs: event.position_ms,
+        serverTime: event.server_time,
+        signedUrl: event.signed_url,
+        signedUrlReceivedAt: Date.now(),
+      }));
+
+      if (channel) {
+        client.emit(
+          "djNowPlaying",
+          channel,
+          track,
+          event.position_ms,
+          event.signed_url,
+        );
+      }
+      break;
+    }
+    case "DjVote": {
+      const channel = client.channels.get(event.channel);
+
+      updateDjState(client, event.channel, () => ({
+        votes: event.votes,
+        voters: event.voters,
+      }));
+
+      if (channel) {
+        client.emit("djVote", channel, event.votes, event.needed, event.voters);
+      }
+      break;
+    }
+    case "DjSkipped": {
+      const channel = client.channels.get(event.channel);
+      const track = hydrateDjTrack(event.track);
+
+      updateDjState(client, event.channel, () => ({
+        current: undefined,
+        positionMs: 0,
+        signedUrl: undefined,
+        signedUrlReceivedAt: undefined,
+        votes: 0,
+        voters: [],
+      }));
+
+      if (channel) {
+        client.emit("djSkipped", channel, track);
+      }
+      break;
+    }
+    case "DjTrackEnded": {
+      const channel = client.channels.get(event.channel);
+      const track = hydrateDjTrack(event.track);
+
+      updateDjState(client, event.channel, (state) => ({
+        // A new track may already have started; only clear ours
+        current:
+          state.current?.track.id === track.id ? undefined : state.current,
+        positionMs: 0,
+        signedUrl: undefined,
+        signedUrlReceivedAt: undefined,
+      }));
+
+      if (channel) {
+        client.emit("djTrackEnded", channel, track);
+      }
+      break;
+    }
+    case "DjQueueCleared": {
+      const channel = client.channels.get(event.channel);
+
+      updateDjState(client, event.channel, () => ({
+        current: undefined,
+        positionMs: 0,
+        signedUrl: undefined,
+        signedUrlReceivedAt: undefined,
+        queue: [],
+        votes: 0,
+        voters: [],
+      }));
+
+      if (channel) {
+        client.emit("djQueueCleared", channel);
+      }
+      break;
+    }
+    case "DjUploadFailed": {
+      const channel = client.channels.get(event.channel);
+
+      if (channel) {
+        client.emit("djUploadFailed", channel, event.reason);
+      }
+      break;
+    }
+    case "DjSettingsUpdate": {
+      const channel = client.channels.get(event.channel);
+      const settings = hydrateDjSettings(event.settings);
+
+      updateDjState(client, event.channel, () => ({ settings }));
+
+      if (channel) {
+        client.channels.updateUnderlyingObject(event.channel, { dj: settings });
+        client.emit("djSettingsUpdate", channel, settings);
+      }
       break;
     }
   }

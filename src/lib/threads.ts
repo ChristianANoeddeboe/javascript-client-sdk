@@ -9,6 +9,8 @@ import type {
   User,
 } from "stoat-api";
 
+import type { DjInformation } from "./dj.js";
+
 /**
  * Order of posts in a forum
  */
@@ -46,6 +48,8 @@ export type ForumTag = {
  */
 type TextChannel = Extract<UpstreamChannel, { channel_type: "TextChannel" }> & {
   default_auto_archive_minutes?: number | null;
+  /** DJ settings, present only on DJ-capable text channels */
+  dj?: DjInformation | null;
 };
 
 /**
@@ -113,6 +117,7 @@ export type FieldsChannel =
   | "Icon"
   | "DefaultPermissions"
   | "Voice"
+  | "Dj"
   | "Slowmode"
   | "DefaultReactionEmoji"
   | "DefaultThreadSlowmode"

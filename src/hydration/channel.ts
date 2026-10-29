@@ -2,6 +2,8 @@ import { ReactiveSet } from "@solid-primitives/set";
 
 import type { Client } from "../Client.js";
 import { File } from "../classes/File.js";
+import { hydrateDjSettings } from "../lib/dj.js";
+import type { DjInformation, DjSettings } from "../lib/dj.js";
 import type { Merge } from "../lib/merge.js";
 import type {
   Channel as APIChannel,
@@ -37,6 +39,9 @@ export type HydratedChannel = {
   lastMessageId?: string;
 
   voice?: { maxUsers?: number };
+
+  /** DJ settings, present only on DJ-capable text channels */
+  dj?: DjSettings;
 
   parentId?: string;
   private: boolean;
@@ -124,6 +129,10 @@ export const channelHydration: Hydrate<Merge<APIChannel>, HydratedChannel> = {
           }
         : undefined,
     parentId: (channel) => channel.parent,
+    dj: (channel) => {
+      const dj = (channel as { dj?: DjInformation | null }).dj;
+      return dj ? hydrateDjSettings(dj) : undefined;
+    },
     private: (channel) => channel.private || false,
     invitable: (channel) => channel.invitable || false,
     appliedTags: (channel) => channel.applied_tags ?? [],

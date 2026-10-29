@@ -36,6 +36,7 @@ import type { HydratedMessage } from "./hydration/message.js";
 import type { HydratedServer } from "./hydration/server.js";
 import type { HydratedServerMember } from "./hydration/serverMember.js";
 import type { HydratedUser } from "./hydration/user.js";
+import type { DjSettings, DjState, DjTrack } from "./lib/dj.js";
 import {
   RE_CHANNELS,
   RE_CUSTOM_EMOJI,
@@ -102,6 +103,28 @@ export type Events = {
   emojiDelete: [emoji: HydratedEmoji];
 
   userSlowmodes: [];
+
+  djMemberJoined: [channel: Channel, userId: string, count: number];
+  djMemberLeft: [channel: Channel, userId: string, count: number];
+  djTrackQueued: [channel: Channel, track: DjTrack, position: number];
+  djTrackStarted: [
+    channel: Channel,
+    track: DjTrack,
+    positionMs: number,
+    signedUrl: string,
+  ];
+  djNowPlaying: [
+    channel: Channel,
+    track: DjTrack,
+    positionMs: number,
+    signedUrl: string,
+  ];
+  djVote: [channel: Channel, votes: number, needed: number, voters: string[]];
+  djSkipped: [channel: Channel, track: DjTrack];
+  djTrackEnded: [channel: Channel, track: DjTrack];
+  djQueueCleared: [channel: Channel];
+  djUploadFailed: [channel: Channel, reason: string];
+  djSettingsUpdate: [channel: Channel, settings: DjSettings];
 };
 
 /**
@@ -186,6 +209,14 @@ export class Client extends AsyncEventEmitter<Events> {
   readonly threadMembers;
   readonly users;
   readonly userSlowmodes;
+
+  /**
+   * DJ state of the channels we are in
+   *
+   * Populated from `Ready.dj_states` and every DJ event. A channel we have
+   * never joined (and fetched) has no entry.
+   */
+  readonly djStates: ReactiveMap<string, DjState>;
 
   readonly api: API;
   readonly options: ClientOptions;
@@ -281,6 +312,7 @@ export class Client extends AsyncEventEmitter<Events> {
     this.threadMembers = new ThreadMemberCollection(this);
     this.users = new UserCollection(this);
     this.userSlowmodes = new ReactiveMap<string, UserSlowmodes>();
+    this.djStates = new ReactiveMap<string, DjState>();
 
     this.events = new EventClient(1, "json", this.options);
     this.events.on("error", (error) => this.emit("error", error));

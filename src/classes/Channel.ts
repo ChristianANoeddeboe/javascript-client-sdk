@@ -16,6 +16,16 @@ import { decodeTime, ulid } from "ulid";
 
 import { ChannelCollection } from "../collections/index.js";
 import { hydrate } from "../hydration/index.js";
+import { encodeDjSettings, hydrateDjState, hydrateDjTrack } from "../lib/dj.js";
+import type {
+  ApiDjChannelState,
+  ApiDjTrack,
+  DataEditDjSettings,
+  DjNowPlaying,
+  DjSettings,
+  DjState,
+  DjTrack,
+} from "../lib/dj.js";
 import type {
   Channel as APIChannel,
   DataCreateThread,
@@ -1223,6 +1233,214 @@ export class Channel {
         force_disconnect: forceDisconnect,
       },
     );
+  }
+
+  /**
+   * DJ settings of this channel, if it is a DJ-capable channel
+   *
+   * Presence marks the channel as joinable from the sidebar; `enabled` says
+   * whether the DJ is currently running.
+   */
+  get dj(): DjSettings | undefined {
+    return this.#collection.getUnderlyingObject(this.id).dj;
+  }
+
+  /**
+   * Whether this channel has DJ capability
+   */
+  get isDj(): boolean {
+    return !!this.dj;
+  }
+
+  /**
+   * Whether the DJ is currently enabled on this channel
+   */
+  get djEnabled(): boolean {
+    return !!this.dj?.enabled;
+  }
+
+  /**
+   * Last known DJ state of this channel, if we have fetched or received one
+   */
+  get djState(): DjState | undefined {
+    return this.#collection.client.djStates.get(this.id);
+  }
+
+  /**
+   * Users known to have joined the DJ channel
+   *
+   * Known for the channels we are a member of, or which we were told about by
+   * a member event; `djMemberCount` is therefore not authoritative for a
+   * channel we have never joined.
+   */
+  get djMembers(): string[] {
+    return this.djState?.members ?? [];
+  }
+
+  /**
+   * Amount of users known to have joined the DJ channel
+   */
+  get djMemberCount(): number {
+    return this.djMembers.length;
+  }
+
+  /**
+   * Whether the current user has joined the DJ channel
+   */
+  get djJoined(): boolean {
+    const userId = this.#collection.client.user?.id;
+    return !!userId && this.djMembers.includes(userId);
+  }
+
+  /**
+   * Current track of the DJ channel, if any
+   */
+  get djCurrent(): DjNowPlaying | undefined {
+    return this.djState?.current;
+  }
+
+  /**
+   * Enable the DJ on this channel
+   * @requires `ManageChannel`
+   */
+  async djEnable(): Promise<DjState> {
+    return this.#djRequest("post", `/channels/${this.id}/dj/enable`);
+  }
+
+  /**
+   * Disable the DJ on this channel, clearing its queue and audio
+   * @requires `ManageChannel`
+   */
+  async djDisable(): Promise<DjState> {
+    const state = await this.#djRequest(
+      "post",
+      `/channels/${this.id}/dj/disable`,
+    );
+
+    this.#collection.client.djStates.delete(this.id);
+    return state;
+  }
+
+  /**
+   * Join the DJ channel, returning its full state
+   * @requires `Connect`
+   */
+  async djJoin(): Promise<DjState> {
+    return this.#djRequest("post", `/channels/${this.id}/dj/join`);
+  }
+
+  /**
+   * Leave the DJ channel
+   *
+   * Idempotent, like leaving a voice call.
+   */
+  async djLeave(): Promise<void> {
+    await this.#api.post(`/channels/${this.id}/dj/leave`);
+    this.#collection.client.djStates.delete(this.id);
+  }
+
+  /**
+   * Fetch the current state of the DJ channel
+   * @requires `ViewChannel`
+   */
+  async djFetch(): Promise<DjState> {
+    return this.#djRequest("get", `/channels/${this.id}/dj`);
+  }
+
+  /**
+   * Vote to skip the track which is currently playing
+   *
+   * Idempotent per `(track, user)`.
+   */
+  async djSkip(): Promise<DjState> {
+    return this.#djRequest("post", `/channels/${this.id}/dj/skip`);
+  }
+
+  /**
+   * Edit the DJ settings of this channel
+   * @requires `ManageChannel`
+   */
+  async djEditSettings(data: DataEditDjSettings): Promise<DjState> {
+    return this.#djRequest(
+      "patch",
+      `/channels/${this.id}/dj/settings`,
+      encodeDjSettings(data),
+    );
+  }
+
+  /**
+   * Upload a track to the DJ queue
+   *
+   * Requires an active membership of the channel and `UploadFiles`. The upload
+   * is transcoded by the server, so this resolves only once the track has been
+   * queued (or the server rejected it).
+   *
+   * @param file Audio file to upload
+   * @param title Display title, defaults to the file name
+   */
+  async djQueue(file: Blob, title?: string): Promise<DjTrack> {
+    const body = new FormData();
+    // `File` in this module is the SDK's file class, so read the name off the
+    // blob rather than testing it against the DOM `File` constructor
+    body.append("file", file, (file as { name?: string }).name || "track.mp3");
+
+    const params = new URLSearchParams();
+    if (title) params.set("title", title);
+    const search = params.toString();
+
+    const { baseURL, headers } = this.#collection.client.api.config;
+    const [key, value] = this.#collection.client.authenticationHeader;
+
+    const response = await fetch(
+      `${baseURL}/channels/${this.id}/dj/queue${search ? `?${search}` : ""}`,
+      {
+        method: "POST",
+        body,
+        headers: {
+          ...headers,
+          [key]: value,
+        },
+      },
+    );
+
+    const data = await response.text();
+    if (!response.ok) throw data;
+
+    return hydrateDjTrack(JSON.parse(data) as ApiDjTrack);
+  }
+
+  /**
+   * Perform a DJ request which answers with a state snapshot
+   */
+  async #djRequest(
+    method: "get" | "post" | "patch",
+    path: string,
+    body?: unknown,
+  ): Promise<DjState> {
+    const api = this.#api;
+    const response =
+      method === "get"
+        ? await api.get(path)
+        : method === "patch"
+          ? await api.patch(path, body)
+          : await api.post(path, body);
+
+    return this.#applyDjState(response as unknown as ApiDjChannelState);
+  }
+
+  /**
+   * Apply a DJ state snapshot to the client state and the channel settings
+   */
+  #applyDjState(state: ApiDjChannelState): DjState {
+    const client = this.#collection.client;
+    const hydrated = hydrateDjState(state, client.djStates.get(this.id));
+
+    client.djStates.set(this.id, hydrated);
+    this.#collection.updateUnderlyingObject(this.id, {
+      dj: hydrated.settings,
+    });
+
+    return hydrated;
   }
 
   /**
