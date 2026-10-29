@@ -1344,14 +1344,22 @@ export async function handleEvent(
       const channel = client.channels.get(event.channel);
       const track = hydrateDjTrack(event.track);
 
-      updateDjState(client, event.channel, () => ({
-        current: undefined,
-        positionMs: 0,
-        signedUrl: undefined,
-        signedUrlReceivedAt: undefined,
-        votes: 0,
-        voters: [],
-      }));
+      updateDjState(client, event.channel, (state) => {
+        // A skip can race the next track's start; only clear the track that
+        // was actually skipped, mirroring `DjTrackEnded`.
+        const skipped = state.current?.track.id === track.id;
+
+        return {
+          current: skipped ? undefined : state.current,
+          positionMs: skipped ? 0 : state.positionMs,
+          signedUrl: skipped ? undefined : state.signedUrl,
+          signedUrlReceivedAt: skipped
+            ? undefined
+            : state.signedUrlReceivedAt,
+          votes: 0,
+          voters: [],
+        };
+      });
 
       if (channel) {
         client.emit("djSkipped", channel, track);
